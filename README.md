@@ -10,6 +10,11 @@ Similarly, the `smbus2_go` package uses pure Go to accomplish the same thing.
 The point of the project is to make it easier to port some python robotics code
 to Go on Raspberry Pi.
 
+Most of the names from the python package have been changed to reflect Go
+naming conventions.
+
 Usage
 -----
+
+(Still to write.)
 
