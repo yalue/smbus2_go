@@ -53,7 +53,7 @@ const (
 	I2CFlag       = 0x00000001
 	Addr10BitFlag = 0x00000002
 	// I2C_M_IGNORE_NAK, etc.
-	ProtocalManglingFlag = 0x00000004
+	ProtocolManglingFlag = 0x00000004
 	SMBUSPECFlag         = 0x00000008
 	// I2C_M_NOSTART
 	NoStartFlag             = 0x00000010
@@ -77,14 +77,124 @@ const (
 
 	SMBusByteFlag      = 0x00060000
 	SMBusByteDataFlag  = 0x00180000
-	SMBusWORDDataFlag  = 0x00600000
-	SMBusBLOCKDataFlag = 0x03000000
+	SMBusWordDataFlag  = 0x00600000
+	SMBusBlockDataFlag = 0x03000000
 	SMBusI2CBlockFlag  = 0x0c000000
 	SMBusEmulFlag      = 0x0eff0008
 
 	// i2c_msg flags from uapi/linux/i2c.h
 	I2CMRD = 0x0001
 )
+
+// These represent a bitfield indicating the capabilities of a bus.
+type FunctionFlags uint32
+
+func (f FunctionFlags) String() string {
+	return fmt.Sprintf("0x%08x", uint32(f))
+}
+
+// Returns true if all of the bits are set in f.
+func (f FunctionFlags) BitsSet(bits uint32) bool {
+	return (uint32(f) & bits) == bits
+}
+
+// Returns the name associated with a single set of "flag" bits.
+func getSingleFlagName(bits uint32) string {
+	switch bits {
+	case I2CFlag:
+		return "I2C"
+	case Addr10BitFlag:
+		return "10-bit address"
+	case ProtocolManglingFlag:
+		return "Protocol mangling"
+	case SMBUSPECFlag:
+		return "SMBus PEC"
+	case NoStartFlag:
+		return "No start"
+	case SlaveFlag:
+		return "Slave"
+	case SMBusBlockProcCallFlag:
+		return "Block procedure call"
+	case SMBusQuickFlag:
+		return "Quick"
+	case SMBusReadByteFlag:
+		return "Read byte"
+	case SMBusWriteByteFlag:
+		return "Write byte"
+	case SMBusReadByteDataFlag:
+		return "Read byte data"
+	case SMBusWriteByteDataFlag:
+		return "Write byte data"
+	case SMBusReadWordDataFlag:
+		return "Read word data"
+	case SMBusWriteWordDataFlag:
+		return "Write word data"
+	case SMBusProcCallFlag:
+		return "Procedure call"
+	case SMBusReadBlockDataFlag:
+		return "Read block data"
+	case SMBusWriteBlockDataFlag:
+		return "Write block data"
+	case SMBusReadI2CBlockFlag:
+		return "Read I2C block"
+	case SMBusWriteI2CBlockFlag:
+		return "Write I2C block"
+	case SMBusHostNotifyFlag:
+		return "Host notify"
+	case SMBusByteFlag:
+		return "Byte"
+	case SMBusByteDataFlag:
+		return "Byte data"
+	case SMBusWordDataFlag:
+		return "Word data"
+	case SMBusBlockDataFlag:
+		return "Block data"
+	case SMBusI2CBlockFlag:
+		return "I2C block"
+	case SMBusEmulFlag:
+		return "Emulated"
+	}
+	return fmt.Sprintf("Unknown flag bits: 0x%08x", bits)
+}
+
+// Returns a list of string representations of each of the set flags.
+func (f FunctionFlags) GetStringsList() []string {
+	toReturn := make([]string, 0, 16)
+	flags := []uint32{
+		I2CFlag,
+		Addr10BitFlag,
+		ProtocolManglingFlag,
+		SMBUSPECFlag,
+		NoStartFlag,
+		SlaveFlag,
+		SMBusBlockProcCallFlag,
+		SMBusQuickFlag,
+		SMBusReadByteFlag,
+		SMBusWriteByteFlag,
+		SMBusReadByteDataFlag,
+		SMBusWriteByteDataFlag,
+		SMBusReadWordDataFlag,
+		SMBusWriteWordDataFlag,
+		SMBusProcCallFlag,
+		SMBusReadBlockDataFlag,
+		SMBusWriteBlockDataFlag,
+		SMBusReadI2CBlockFlag,
+		SMBusWriteI2CBlockFlag,
+		SMBusHostNotifyFlag,
+		SMBusByteFlag,
+		SMBusByteDataFlag,
+		SMBusWordDataFlag,
+		SMBusBlockDataFlag,
+		SMBusI2CBlockFlag,
+		SMBusEmulFlag,
+	}
+	for _, flag := range flags {
+		if f.BitsSet(flag) {
+			toReturn = append(toReturn, getSingleFlagName(flag))
+		}
+	}
+	return toReturn
+}
 
 // Provides a ioctl wrapper that works with the syscall library. Sorry for the
 // unsafe usage.
@@ -100,7 +210,7 @@ func ioctl(fd int, cmd uintptr, arg uintptr) error {
 type SMBus struct {
 	fd int
 	// A bitfield indicating what functions are supported by the I2C device.
-	Funcs             uint32
+	Funcs             FunctionFlags
 	forceSlaveAddress bool
 	forceLast         bool
 	pec               uint32
@@ -133,6 +243,6 @@ func NewSMBusWithPath(path string) (*SMBus, error) {
 	}
 	return &SMBus{
 		fd:    fd,
-		Funcs: funcs,
+		Funcs: FunctionFlags(funcs),
 	}, nil
 }

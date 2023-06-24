@@ -13,7 +13,11 @@ func TestOpenBus(t *testing.T) {
 			"/dev/i2c-%d exists and is valid.\n", busID)
 		t.FailNow()
 	}
-	t.Logf("Opened SMBus %d OK. Funcs = 0x%08x\n", busID, bus.Funcs)
+	t.Logf("Opened SMBus %d OK. Funcs = %s\n", busID, bus.Funcs)
+	funcsList := bus.Funcs.GetStringsList()
+	for i, s := range funcsList {
+		t.Logf("  Function %d: %s\n", i, s)
+	}
 	e = bus.Close()
 	if e != nil {
 		t.Logf("Error closing SMBus object: %s\n", e)
