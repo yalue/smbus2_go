@@ -480,3 +480,186 @@ func (b *SMBus) ProcessCall(address uintptr, register uint8,
 	result := b.nativeByteOrder.Uint16(data[:])
 	return result, nil
 }
+
+// Reads and returns a block of up to 32 bytes from the given register.
+func (b *SMBus) ReadBlockData(address uintptr, register uint8) ([]byte,
+	error) {
+	e := b.setAddress(address)
+	if e != nil {
+		return nil, e
+	}
+	var data C.union_i2c_smbus_data
+	msg := C.struct_i2c_smbus_ioctl_data{
+		read_write: I2CSMBusRead,
+		command:    C.__u8(register),
+		size:       I2CSMBusBlockData,
+		data:       &data,
+	}
+	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&msg)))
+	if e != nil {
+		return nil, fmt.Errorf("Error issuing read block data ioctl: %w", e)
+	}
+	length := data[0]
+	if length > I2CSMBusBlockMax {
+		return nil, fmt.Errorf("Invalid length response for block-data read: "+
+			"%d bytes", length)
+	}
+	return data[1 : length+1], nil
+}
+
+// Writes a block of up to 32 bytes to the given register.
+func (b *SMBus) WriteBlockData(address uintptr, register uint8,
+	values []byte) error {
+	e := b.setAddress(address)
+	if e != nil {
+		return e
+	}
+	length := len(values)
+	if length > I2CSMBusBlockMax {
+		return fmt.Errorf("Block-data write of %d bytes exceeds limit of %d",
+			length, I2CSMBusBlockMax)
+	}
+	var data C.union_i2c_smbus_data
+	data[0] = uint8(length)
+	copy(data[1:length+1], values)
+	msg := C.struct_i2c_smbus_ioctl_data{
+		read_write: I2CSMBusWrite,
+		command:    C.__u8(register),
+		size:       I2CSMBusBlockData,
+		data:       &data,
+	}
+	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&msg)))
+	if e != nil {
+		return fmt.Errorf("Error issuing write block data ioctl: %w", e)
+	}
+	return nil
+}
+
+// Executes a block process call, sending a variable-length block and receiving
+// a variable-length response.
+func (b *SMBus) BlockProcessCall(address uintptr, register uint8,
+	values []byte) ([]byte, error) {
+	e := b.setAddress(address)
+	if e != nil {
+		return nil, e
+	}
+	length := len(values)
+	if length > I2CSMBusBlockMax {
+		return nil, fmt.Errorf("Block-procedure call with %d input bytes "+
+			"exceeds limit of %d bytes", length, I2CSMBusBlockMax)
+	}
+	var data C.union_i2c_smbus_data
+	data[0] = uint8(length)
+	copy(data[1:length+1], values)
+	msg := C.struct_i2c_smbus_ioctl_data{
+		read_write: I2CSMBusWrite,
+		command:    C.__u8(register),
+		size:       I2CSMBusBlockProcCall,
+		data:       &data,
+	}
+	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&msg)))
+	if e != nil {
+		return nil, fmt.Errorf("Error issuing block proc call ioctl: %w", e)
+	}
+	length = int(data[0])
+	if length > I2CSMBusBlockMax {
+		return nil, fmt.Errorf("Invalid length response for block proc "+
+			"call: %d bytes", length)
+	}
+	return data[1 : length+1], nil
+}
+
+// Reads a block of data with the specified length from the specified register.
+func (b *SMBus) ReadI2CBlockData(address uintptr, register,
+	length uint8) ([]byte, error) {
+	if length > I2CSMBusBlockMax {
+		return nil, fmt.Errorf("Requested length of %d bytes exceeds the "+
+			"limit of %d bytes", length, I2CSMBusBlockMax)
+	}
+	e := b.setAddress(address)
+	if e != nil {
+		return nil, e
+	}
+	var data C.union_i2c_smbus_data
+	data[0] = uint8(length)
+	msg := C.struct_i2c_smbus_ioctl_data{
+		read_write: I2CSMBusRead,
+		command:    C.__u8(register),
+		size:       I2CSMBusI2CBlockData,
+		data:       &data,
+	}
+	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&msg)))
+	if e != nil {
+		return nil, fmt.Errorf("Error issuing i2c block data read ioctl: %w",
+			e)
+	}
+	return data[1 : length+1], nil
+}
+
+// Writes a block of data to the specified register.
+func (b *SMBus) WriteI2CBlockData(address uintptr, register uint8,
+	values []byte) error {
+	length := len(values)
+	if length > I2CSMBusBlockMax {
+		return fmt.Errorf("Data length of %d bytes exceeds the limit of "+
+			"%d bytes", length, I2CSMBusBlockMax)
+	}
+	e := b.setAddress(address)
+	if e != nil {
+		return e
+	}
+	var data C.union_i2c_smbus_data
+	data[0] = uint8(length)
+	copy(data[1:length+1], values)
+	msg := C.struct_i2c_smbus_ioctl_data{
+		read_write: I2CSMBusWrite,
+		command:    C.__u8(register),
+		size:       I2CSMBusI2CBlockData,
+		data:       &data,
+	}
+	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&msg)))
+	if e != nil {
+		return fmt.Errorf("Error issuing i2c block data write ioctl: %w", e)
+	}
+	return nil
+}
+
+// Represents an i2c_msg struct. Will be internally converted to a different
+// format for the actual ioctl within the I2CRdWr function.
+type I2CMessage struct {
+	Address uint16
+	Flags   uint16
+	Length  uint16
+	// Note: This must *always* be at least one byte! Also, it may be UNSAFE
+	// to use if the caller doesn't allocate enough space in it.
+	Buffer []byte
+}
+
+// Issues a list of messages. May be highly unsafe if any message doesn't have
+// a sufficient buffer. Use with caution.
+func (b *SMBus) I2CRdWr(messages []I2CMessage) error {
+	if len(messages) == 0 {
+		return fmt.Errorf("Got no messages")
+	}
+	internalMessages := make([]C.struct_i2c_msg, len(messages))
+	for i := range messages {
+		internalMessages[i].addr = C.__u16(messages[i].Address)
+		internalMessages[i].flags = C.__u16(messages[i].Flags)
+		internalMessages[i].len = C.__u16(messages[i].Length)
+		if len(messages[i].Buffer) == 0 {
+			return fmt.Errorf("All I2CMessage instances must have at least " +
+				"1 byte allocated in their buffers")
+		}
+		internalMessages[i].buf = (*C.__u8)(unsafe.Pointer(
+			&(messages[i].Buffer[0])))
+	}
+	ioctlData := C.struct_i2c_rdwr_ioctl_data{
+		msgs:  &(internalMessages[0]),
+		nmsgs: C.__u32(len(messages)),
+	}
+	e := ioctl(b.fd, I2CRDWR, uintptr(unsafe.Pointer(&ioctlData)))
+	if e != nil {
+		return fmt.Errorf("Error issuing I2C_RDWR ioctl: %w", e)
+	}
+	return nil
+}
