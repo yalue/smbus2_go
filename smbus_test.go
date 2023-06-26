@@ -1,8 +1,11 @@
-package smbus2_go
+package smbus_go
 
 import (
 	"testing"
 )
+
+// We don't use cgo for the main library, but we use it for testing; need to
+// ensure that the struct sizes match what's expected by the C library.
 
 func TestOpenBus(t *testing.T) {
 	busID := 0

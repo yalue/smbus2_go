@@ -1,17 +1,13 @@
-A Pure Go Reimplementation of the smbus2 Python Package
-=======================================================
+A Go "Port" of the smbus Python Package
+=======================================
 
 About
 -----
 
-This project seeks to reimplement the [smbus2](https://github.com/kplindegaard/smbus2)
-python package, which implements a particular SMBus API in pure python.
-Similarly, the `smbus2_go` package uses pure Go to accomplish the same thing.
-The point of the project is to make it easier to port some python robotics code
-to Go on Raspberry Pi.
-
-Most of the names from the python package have been changed to reflect Go
-naming conventions.
+Python's `smbus` package, among other things, gives access to i2c devices on
+Linux. This project provides a similar wrapper for Go, with names from the
+python package modified to reflect Go conventions. It is intended to simplify
+porting robotics code to Go.
 
 Usage
 -----

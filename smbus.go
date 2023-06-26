@@ -1,20 +1,30 @@
-// Thia package seeks to provide a very similar API to the smbus2 python
-// package, except written in pure Go. The point of the package is to simplify
-// porting some python robotics code to go. This package is only expected to
-// work on Linux, tested on Raspberry pi.
+// Thia package seeks to provide a very similar API to the smbus python
+// package, except in Go. The point of the package is to simplify porting some
+// python robotics code to go. This package is only expected to work on Linux,
+// tested on Raspberry pi.
 //
 // A lot of the code is ported near-verbatim from python-smbus2; interested
 // readers should view the original repository:
 // https://github.com/kplindegaard/smbus2.git
 //
 // Variables and functions have been renamed to align with Go conventions.
-package smbus2_go
+package smbus_go
 
 import (
 	"fmt"
 	"syscall"
 	"unsafe"
 )
+
+// TODO (next): Continue porting to cgo
+//  - Just use C for everything
+//  - Rename to just "smbus_go"
+//  - Rename the repo and update git links
+
+/*
+#include <linux/i2c-dev.h>
+*/
+import "C"
 
 const (
 	// Commands from uapi/linux/i2c-dev.h
@@ -41,7 +51,7 @@ const (
 	I2CSMBusByteData = 2
 	I2CSMBusWordData = 3
 	I2CSMBusProcCall = 4
-	// This isn't supported by Pure-I2C drivers with SMBUS emulation, like
+	// This isn't supported by Pure-I2C drivers with SMBus emulation, like
 	// those in Raspberry Pi, OrangePi, etc :(
 	I2CSMBusBlockData = 5
 	// Like I2CSMBusBlockData, it isn't supported by Pure-I2C drivers either.
@@ -54,7 +64,7 @@ const (
 	Addr10BitFlag = 0x00000002
 	// I2C_M_IGNORE_NAK, etc.
 	ProtocolManglingFlag = 0x00000004
-	SMBUSPECFlag         = 0x00000008
+	SMBusPECFlag         = 0x00000008
 	// I2C_M_NOSTART
 	NoStartFlag             = 0x00000010
 	SlaveFlag               = 0x00000020
@@ -107,7 +117,7 @@ func getSingleFlagName(bits uint32) string {
 		return "10-bit address"
 	case ProtocolManglingFlag:
 		return "Protocol mangling"
-	case SMBUSPECFlag:
+	case SMBusPECFlag:
 		return "SMBus PEC"
 	case NoStartFlag:
 		return "No start"
@@ -164,7 +174,7 @@ func (f FunctionFlags) GetStringsList() []string {
 		I2CFlag,
 		Addr10BitFlag,
 		ProtocolManglingFlag,
-		SMBUSPECFlag,
+		SMBusPECFlag,
 		NoStartFlag,
 		SlaveFlag,
 		SMBusBlockProcCallFlag,
@@ -196,8 +206,17 @@ func (f FunctionFlags) GetStringsList() []string {
 	return toReturn
 }
 
-// Provides a ioctl wrapper that works with the syscall library. Sorry for the
-// unsafe usage.
+// As defined in i2c-dev.h.
+type I2CSMBusIoctlData struct {
+	ReadWrite uint8
+	Command   uint8
+	// Needed to pad to 32-byte alignment on my system.
+	Pad  uint16
+	Size uint32
+	Data unsafe.Pointer
+}
+
+// Provides a ioctl wrapper that works with the syscall library.
 func ioctl(fd int, cmd uintptr, arg uintptr) error {
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), cmd, arg)
 	if errno != 0 {
@@ -210,10 +229,12 @@ func ioctl(fd int, cmd uintptr, arg uintptr) error {
 type SMBus struct {
 	fd int
 	// A bitfield indicating what functions are supported by the I2C device.
-	Funcs             FunctionFlags
-	forceSlaveAddress bool
-	forceLast         bool
-	pec               uint32
+	Funcs   FunctionFlags
+	address uintptr
+	Force   bool
+	// The value of Force for the previous call to setAddress.
+	prevForce  bool
+	pecEnabled bool
 }
 
 // Should be called when the SMBus connection is no longer needed. Closes the
@@ -245,4 +266,62 @@ func NewSMBusWithPath(path string) (*SMBus, error) {
 		fd:    fd,
 		Funcs: FunctionFlags(funcs),
 	}, nil
+}
+
+// Returns true if PEC (packet error checking) is currently enabled.
+func (b *SMBus) PECEnabled() bool {
+	return b.pecEnabled
+}
+
+// Enable or disable PEC (packet error checking). Returns an error if the
+// feature is not available, or if the ioctl fails for some reason.
+func (b *SMBus) EnablePEC(enable bool) error {
+	if !b.Funcs.BitsSet(SMBusPECFlag) {
+		return fmt.Errorf("PEC is not a supported feature on this bus")
+	}
+	arg := uintptr(0)
+	if enable {
+		arg = 1
+	}
+	e := ioctl(b.fd, I2CPEC, arg)
+	if e != nil {
+		return fmt.Errorf("Error issuing I2C_PEC ioctl: %w", e)
+	}
+	b.pecEnabled = enable
+	return nil
+}
+
+// Set the I2C slave address to use for subsequent calls. The overrideForce
+// argument is used because the force argument is optional in _set_address in
+// the python library.
+func (b *SMBus) setAddress(address uintptr) error {
+	var e error
+	if (b.address != address) || (b.prevForce != b.Force) {
+		if b.Force {
+			e = ioctl(b.fd, I2CSlaveForce, address)
+		} else {
+			e = ioctl(b.fd, I2CSlave, address)
+		}
+		if e != nil {
+			return fmt.Errorf("Error running slave address ioctl: %w", e)
+		}
+		b.address = address
+		b.prevForce = b.Force
+	}
+	return nil
+}
+
+// Perform a quick transaction.
+func (b *SMBus) WriteQuick(address uintptr) error {
+	b.setAddress(address)
+	data := C.struct_i2c_smbus_ioctl_data{}
+	data.read_write = I2CSMBusWrite
+	data.command = 0
+	data.size = I2CSMBusQuick
+	data.data = nil
+	e := ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&data)))
+	if e != nil {
+		return fmt.Errorf("Error issuing quick transaction ioctl: %w", e)
+	}
+	return nil
 }
