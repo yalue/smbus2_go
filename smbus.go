@@ -22,6 +22,7 @@ import (
 //  - Rename the repo and update git links
 
 /*
+#include <linux/i2c.h>
 #include <linux/i2c-dev.h>
 */
 import "C"
@@ -313,15 +314,61 @@ func (b *SMBus) setAddress(address uintptr) error {
 
 // Perform a quick transaction.
 func (b *SMBus) WriteQuick(address uintptr) error {
-	b.setAddress(address)
-	data := C.struct_i2c_smbus_ioctl_data{}
-	data.read_write = I2CSMBusWrite
-	data.command = 0
-	data.size = I2CSMBusQuick
-	data.data = nil
-	e := ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&data)))
+	e := b.setAddress(address)
+	if e != nil {
+		return e
+	}
+	var tmp C.union_i2c_smbus_data
+	data := C.struct_i2c_smbus_ioctl_data{
+		read_write: I2CSMBusWrite,
+		command:    0,
+		size:       I2CSMBusQuick,
+		data:       &tmp,
+	}
+	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&data)))
 	if e != nil {
 		return fmt.Errorf("Error issuing quick transaction ioctl: %w", e)
+	}
+	return nil
+}
+
+// Read a single byte from a device.
+func (b *SMBus) ReadByte(address uintptr) (uint8, error) {
+	e := b.setAddress(address)
+	if e != nil {
+		return 0, e
+	}
+	var tmp C.union_i2c_smbus_data
+	data := C.struct_i2c_smbus_ioctl_data{
+		read_write: I2CSMBusRead,
+		command:    0,
+		size:       I2CSMBusByte,
+		data:       &tmp,
+	}
+	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&data)))
+	if e != nil {
+		return 0, fmt.Errorf("Error issuing read byte ioctl: %w", e)
+	}
+	// Go represents unions as a slice of bytes.
+	return uint8(tmp[0]), nil
+}
+
+// Write a single byte to the device.
+func (b *SMBus) WriteByte(address uintptr, value byte) error {
+	e := b.setAddress(address)
+	if e != nil {
+		return e
+	}
+	var tmp C.union_i2c_smbus_data
+	data := C.struct_i2c_smbus_ioctl_data{
+		read_write: I2CSMBusWrite,
+		command:    C.__u8(value),
+		size:       I2CSMBusByte,
+		data:       &tmp,
+	}
+	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&data)))
+	if e != nil {
+		return fmt.Errorf("Error issuing write byte ioctl: %w", e)
 	}
 	return nil
 }
