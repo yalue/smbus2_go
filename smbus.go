@@ -11,15 +11,12 @@
 package smbus_go
 
 import (
+	"encoding/binary"
 	"fmt"
+	"github.com/yalue/native_endian"
 	"syscall"
 	"unsafe"
 )
-
-// TODO (next): Continue porting to cgo
-//  - Just use C for everything
-//  - Rename to just "smbus_go"
-//  - Rename the repo and update git links
 
 /*
 #include <linux/i2c.h>
@@ -236,6 +233,9 @@ type SMBus struct {
 	// The value of Force for the previous call to setAddress.
 	prevForce  bool
 	pecEnabled bool
+	// Used for converting from Go's byte-slice representation of unions to
+	// multi-byte types.
+	nativeByteOrder binary.ByteOrder
 }
 
 // Should be called when the SMBus connection is no longer needed. Closes the
@@ -264,8 +264,9 @@ func NewSMBusWithPath(path string) (*SMBus, error) {
 		return nil, fmt.Errorf("Error getting funcs for %s: %w", path, e)
 	}
 	return &SMBus{
-		fd:    fd,
-		Funcs: FunctionFlags(funcs),
+		fd:              fd,
+		Funcs:           FunctionFlags(funcs),
+		nativeByteOrder: native_endian.NativeEndian(),
 	}, nil
 }
 
@@ -411,4 +412,71 @@ func (b *SMBus) WriteByteData(address uintptr, register, value uint8) error {
 		return fmt.Errorf("Error issuing write byte data ioctl: %w", e)
 	}
 	return nil
+}
+
+// Reads and returns a 2-byte word from a register.
+func (b *SMBus) ReadWordData(address uintptr, register uint8) (uint16, error) {
+	e := b.setAddress(address)
+	if e != nil {
+		return 0, e
+	}
+	var data C.union_i2c_smbus_data
+	msg := C.struct_i2c_smbus_ioctl_data{
+		read_write: I2CSMBusRead,
+		command:    C.__u8(register),
+		size:       I2CSMBusWordData,
+		data:       &data,
+	}
+	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&msg)))
+	if e != nil {
+		return 0, fmt.Errorf("Error issuing read word data ioctl: %w", e)
+	}
+	toReturn := b.nativeByteOrder.Uint16(data[:])
+	return toReturn, nil
+}
+
+// Writes a 2-byte word to a register.
+func (b *SMBus) WriteWordData(address uintptr, register uint8,
+	value uint16) error {
+	e := b.setAddress(address)
+	if e != nil {
+		return e
+	}
+	var data C.union_i2c_smbus_data
+	b.nativeByteOrder.PutUint16(data[:], value)
+	msg := C.struct_i2c_smbus_ioctl_data{
+		read_write: I2CSMBusWrite,
+		command:    C.__u8(register),
+		size:       I2CSMBusWordData,
+		data:       &data,
+	}
+	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&msg)))
+	if e != nil {
+		return fmt.Errorf("Error issuing write word data ioctl: %w", e)
+	}
+	return nil
+}
+
+// Executes a SMBus process call, sending a 2-byte value and receiving a
+// 2-byte response.
+func (b *SMBus) ProcessCall(address uintptr, register uint8,
+	value uint16) (uint16, error) {
+	e := b.setAddress(address)
+	if e != nil {
+		return 0, e
+	}
+	var data C.union_i2c_smbus_data
+	b.nativeByteOrder.PutUint16(data[:], value)
+	msg := C.struct_i2c_smbus_ioctl_data{
+		read_write: I2CSMBusWrite,
+		command:    C.__u8(register),
+		size:       I2CSMBusProcCall,
+		data:       &data,
+	}
+	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&msg)))
+	if e != nil {
+		return 0, fmt.Errorf("Error issuing proc call ioctl: %w", e)
+	}
+	result := b.nativeByteOrder.Uint16(data[:])
+	return result, nil
 }
