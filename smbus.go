@@ -318,14 +318,14 @@ func (b *SMBus) WriteQuick(address uintptr) error {
 	if e != nil {
 		return e
 	}
-	var tmp C.union_i2c_smbus_data
-	data := C.struct_i2c_smbus_ioctl_data{
+	var data C.union_i2c_smbus_data
+	msg := C.struct_i2c_smbus_ioctl_data{
 		read_write: I2CSMBusWrite,
 		command:    0,
 		size:       I2CSMBusQuick,
-		data:       &tmp,
+		data:       &data,
 	}
-	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&data)))
+	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&msg)))
 	if e != nil {
 		return fmt.Errorf("Error issuing quick transaction ioctl: %w", e)
 	}
@@ -338,37 +338,77 @@ func (b *SMBus) ReadByte(address uintptr) (uint8, error) {
 	if e != nil {
 		return 0, e
 	}
-	var tmp C.union_i2c_smbus_data
-	data := C.struct_i2c_smbus_ioctl_data{
+	var data C.union_i2c_smbus_data
+	msg := C.struct_i2c_smbus_ioctl_data{
 		read_write: I2CSMBusRead,
 		command:    0,
 		size:       I2CSMBusByte,
-		data:       &tmp,
+		data:       &data,
 	}
-	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&data)))
+	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&msg)))
 	if e != nil {
 		return 0, fmt.Errorf("Error issuing read byte ioctl: %w", e)
 	}
 	// Go represents unions as a slice of bytes.
-	return uint8(tmp[0]), nil
+	return uint8(data[0]), nil
 }
 
 // Write a single byte to the device.
-func (b *SMBus) WriteByte(address uintptr, value byte) error {
+func (b *SMBus) WriteByte(address uintptr, value uint8) error {
 	e := b.setAddress(address)
 	if e != nil {
 		return e
 	}
-	var tmp C.union_i2c_smbus_data
-	data := C.struct_i2c_smbus_ioctl_data{
+	var data C.union_i2c_smbus_data
+	msg := C.struct_i2c_smbus_ioctl_data{
 		read_write: I2CSMBusWrite,
 		command:    C.__u8(value),
 		size:       I2CSMBusByte,
-		data:       &tmp,
+		data:       &data,
 	}
-	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&data)))
+	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&msg)))
 	if e != nil {
 		return fmt.Errorf("Error issuing write byte ioctl: %w", e)
+	}
+	return nil
+}
+
+// Reads a byte from a register.
+func (b *SMBus) ReadByteData(address uintptr, register uint8) (uint8, error) {
+	e := b.setAddress(address)
+	if e != nil {
+		return 0, e
+	}
+	var data C.union_i2c_smbus_data
+	msg := C.struct_i2c_smbus_ioctl_data{
+		read_write: I2CSMBusRead,
+		command:    C.__u8(register),
+		size:       I2CSMBusByteData,
+		data:       &data,
+	}
+	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&msg)))
+	if e != nil {
+		return 0, fmt.Errorf("Error issuing read byte data ioctl: %w", e)
+	}
+	return uint8(data[0]), nil
+}
+
+func (b *SMBus) WriteByteData(address uintptr, register, value uint8) error {
+	e := b.setAddress(address)
+	if e != nil {
+		return e
+	}
+	var data C.union_i2c_smbus_data
+	data[0] = value
+	msg := C.struct_i2c_smbus_ioctl_data{
+		read_write: I2CSMBusWrite,
+		command:    C.__u8(register),
+		size:       I2CSMBusByteData,
+		data:       &data,
+	}
+	e = ioctl(b.fd, I2CSMBus, uintptr(unsafe.Pointer(&msg)))
+	if e != nil {
+		return fmt.Errorf("Error issuing write byte data ioctl: %w", e)
 	}
 	return nil
 }
